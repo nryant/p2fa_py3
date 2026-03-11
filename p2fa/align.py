@@ -49,6 +49,35 @@ import argparse
 TEMP_DIR = os.path.join(tempfile.gettempdir(), 'p2fa')
 LOG_LIKELIHOOD_REGEX = r'.+==\s+\[\d+ frames\]\s+(-?\d+.\d+)'
 
+# HTK stores timestamps in units of 100 ns; divide by this to get seconds.
+HTK_TIME_UNIT = 10000000.0
+
+# Half the HTK PLP analysis window duration (25 ms window => 12.5 ms).
+# Added to raw HTK timestamps so that onsets/offsets correspond to the
+# centres of the analysis windows rather than their beginnings.
+HTK_TS_SHIFT = 0.0125
+
+# HTK internally treats 11025 Hz audio as if it were sampled at 11000 Hz,
+# so its timestamps are slightly stretched relative to real time.
+# Multiplying by this factor scales them back to true wall-clock time.
+HTK_SR_11025_SCALE = 11000.0 / 11025.0
+
+
+def htk_to_seconds(htk_time):
+    """Convert an HTK timestamp from 100 ns units to seconds.
+
+    Parameters
+    ----------
+    htk_time : int or float
+        Raw HTK timestamp in 100 ns units.
+
+    Returns
+    -------
+    float
+        Time in seconds.
+    """
+    return float(htk_time) / HTK_TIME_UNIT
+
 
 def prep_wav(orig_wav, out_wav, sr_override, wave_start, wave_end, sr_models):
     if os.path.exists(out_wav) and False:
@@ -159,7 +188,7 @@ def write_input_mlf(mlffile, words):
     fw.close()
 
 
-def read_aligned_mlf(mlffile, sr, wave_start):
+def read_aligned_mlf(mlffile, sr, wave_start, duration=None):
     # This reads a MLFalignment output  file with phone and word
     # alignments and returns a list of words, each word is a list containing
     # the word label followed by the phones, each phone is a tuple
@@ -186,17 +215,27 @@ def read_aligned_mlf(mlffile, sr, wave_start):
         # Append this phone to the latest word (sub-)list
         ph = lines[j].split()[2]
         if sr == 11025:
-            st = (float(lines[j].split()[0]) / 10000000.0
-                  + 0.0125) * (11000.0 / 11025.0)
-            en = (float(lines[j].split()[1]) / 10000000.0
-                  + 0.0125) * (11000.0 / 11025.0)
+            st = (htk_to_seconds(lines[j].split()[0])
+                  + HTK_TS_SHIFT) * HTK_SR_11025_SCALE
+            en = (htk_to_seconds(lines[j].split()[1])
+                  + HTK_TS_SHIFT) * HTK_SR_11025_SCALE
         else:
-            st = float(lines[j].split()[0]) / 10000000.0 + 0.0125
-            en = float(lines[j].split()[1]) / 10000000.0 + 0.0125
+            st = htk_to_seconds(lines[j].split()[0]) + HTK_TS_SHIFT
+            en = htk_to_seconds(lines[j].split()[1]) + HTK_TS_SHIFT
         if st < en:
             ret[-1].append([ph, st + wave_start, en + wave_start])
 
         j += 1
+
+    # If no duration was supplied, estimate it from the last parsed offset
+    # (before clamping), using the same conversion pipeline as above.
+    if duration is None:
+        duration = ret[-1][-1][2] - float(wave_start)
+
+    # Clamp first onset and last offset to eliminate the effect of the
+    # HTK_TS_SHIFT applied to all timestamps above.
+    ret[0][1][1] = float(wave_start)
+    ret[-1][-1][2] = float(wave_start) + duration
 
     return ret
 
@@ -452,14 +491,22 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
     hmmdir = os.path.join(model_path, hmmsubdir)
     viterbi(input_mlf, word_dictionary, output_mlf, mpfile, hmmdir,
             verbose=verbose)
+
+    # compute actual recording duration for timestamp clamping
+    f = wave.open(tmpwav, 'r')
+    rec_duration = f.getnframes() / sr
+    f.close()
+
     if state_align:
         viterbi(input_mlf, word_dictionary, state_mlf, mpfile, hmmdir,
                 state_align=True, verbose=verbose)
-        state_alignments = read_aligned_mlf(state_mlf, sr, float(wave_start))
+        state_alignments = read_aligned_mlf(
+            state_mlf, sr, float(wave_start), duration=rec_duration)
     else:
         state_alignments = None
 
-    _alignments = read_aligned_mlf(output_mlf, sr, float(wave_start))
+    _alignments = read_aligned_mlf(
+        output_mlf, sr, float(wave_start), duration=rec_duration)
     phoneme_alignments, word_alignments = make_alignment_lists(_alignments)
 
     av_score_per_frame = get_av_log_likelihood_per_frame(results_mlf)
