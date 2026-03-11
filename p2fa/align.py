@@ -47,7 +47,6 @@ import tempfile
 import wave
 
 
-TEMP_DIR = os.path.join(tempfile.gettempdir(), 'p2fa')
 LOG_LIKELIHOOD_REGEX = r'.+==\s+\[\d+ frames\]\s+(-?\d+.\d+)'
 
 # HTK stores timestamps in units of 100 ns; divide by this to get seconds.
@@ -508,27 +507,10 @@ def write_htk_label_file(outfile, segments):
             f.write(f'{onset}\t{offset}\t{label}\n')
 
 
-def prep_working_directory():
-    """Create a clean temporary working directory at ``TEMP_DIR``.
-
-    Any existing directory at that path is removed first.
-    """
-    delete_working_directory()
-    os.mkdir(TEMP_DIR)
-
-
-def delete_working_directory():
-    """Remove the temporary working directory at ``TEMP_DIR``, if it exists."""
-    try:
-        shutil.rmtree(TEMP_DIR)
-    except OSError:
-        pass
-
-
-def prep_scp(wavfile):
+def prep_scp(wavfile, tmpdir):
     """Write the HTK SCP script files required by HCopy and HVite.
 
-    Creates two files in ``TEMP_DIR``:
+    Creates two files in *tmpdir*:
 
     * ``codetr.scp`` — maps *wavfile* to the PLP feature file path,
       used by HCopy to generate features.
@@ -539,24 +521,28 @@ def prep_scp(wavfile):
     ----------
     wavfile : str
         Path to the prepared wav file to be feature-extracted.
+    tmpdir : str
+        Path to the temporary working directory for this run.
     """
-    with open(os.path.join(TEMP_DIR, 'codetr.scp'), 'w') as fw:
-        fw.write(wavfile + ' ' + os.path.join(TEMP_DIR, 'tmp.plp') + '\n')
-    with open(os.path.join(TEMP_DIR, 'test.scp'), 'w') as fw:
-        fw.write(os.path.join(TEMP_DIR, 'tmp.plp') + '\n')
+    with open(os.path.join(tmpdir, 'codetr.scp'), 'w') as fw:
+        fw.write(wavfile + ' ' + os.path.join(tmpdir, 'tmp.plp') + '\n')
+    with open(os.path.join(tmpdir, 'test.scp'), 'w') as fw:
+        fw.write(os.path.join(tmpdir, 'tmp.plp') + '\n')
 
 
-def create_plp(hcopy_config, verbose=False):
+def create_plp(hcopy_config, tmpdir, verbose=False):
     """Run HCopy to extract PLP features from the prepared wav file.
 
-    Reads the wav file listed in ``TEMP_DIR/codetr.scp`` and writes PLP
-    features to ``TEMP_DIR/tmp.plp`` using the supplied HCopy
-    configuration file.
+    Reads the wav file listed in ``codetr.scp`` and writes PLP features
+    to ``tmp.plp`` in *tmpdir*, using the supplied HCopy configuration
+    file.
 
     Parameters
     ----------
     hcopy_config : str
         Path to the HCopy configuration file for the target sample rate.
+    tmpdir : str
+        Path to the temporary working directory for this run.
     verbose : bool, optional
         If True, print the HCopy command before executing it.
         Default is False.
@@ -564,7 +550,7 @@ def create_plp(hcopy_config, verbose=False):
     cmd = [
         'HCopy', '-T', '1',
         '-C', hcopy_config,
-        '-S', os.path.join(TEMP_DIR, 'codetr.scp')]
+        '-S', os.path.join(tmpdir, 'codetr.scp')]
     if verbose:
         print('creating plp...\n', ' '.join(cmd))
 
@@ -572,14 +558,14 @@ def create_plp(hcopy_config, verbose=False):
 
 
 def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
-            state_align=False, verbose=False):
+            tmpdir, state_align=False, verbose=False):
     """Run HVite to perform Viterbi forced alignment.
 
-    Aligns the PLP features in ``TEMP_DIR/tmp.plp`` against the word
+    Aligns the PLP features in ``tmp.plp`` in *tmpdir* against the word
     sequence in *input_mlf* and writes phone-level (and optionally
     HMM state-level) alignments to *output_mlf*. HVite stdout (which
     contains the per-utterance log-likelihood score) is written to
-    ``TEMP_DIR/aligned.results``.
+    ``aligned.results`` in *tmpdir*.
 
     Parameters
     ----------
@@ -594,6 +580,8 @@ def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
     hmmdir : str
         Directory containing the acoustic model files (``macros`` and
         ``hmmdefs``).
+    tmpdir : str
+        Path to the temporary working directory for this run.
     state_align : bool, optional
         If True, pass ``-f -y lab`` to HVite to produce HMM state-level
         alignments in addition to phone-level ones. Default is False.
@@ -608,7 +596,7 @@ def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
         '-I', input_mlf,
         '-H', os.path.join(hmmdir, 'macros'),
         '-H', os.path.join(hmmdir, 'hmmdefs'),
-        '-S', os.path.join(TEMP_DIR, 'test.scp'),
+        '-S', os.path.join(tmpdir, 'test.scp'),
         '-i', output_mlf,
         '-p', '0.0',
         '-s', '5.0',
@@ -618,7 +606,7 @@ def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
     if verbose:
         print('running viterbi...\n', ' '.join(cmd))
 
-    results_file = os.path.join(TEMP_DIR, 'aligned.results')
+    results_file = os.path.join(tmpdir, 'aligned.results')
     with open(results_file, 'w') as f:
         subprocess.run(cmd, check=True, stdout=f)
 
@@ -702,93 +690,95 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
             and sr_override not in sr_models):
         raise Exception("invalid sample rate: not an acoustic model available")
 
-    word_dictionary = os.path.join(TEMP_DIR, 'dict')
-    input_mlf = os.path.join(TEMP_DIR, 'tmp.mlf')
-    output_mlf = os.path.join(TEMP_DIR, 'aligned.mlf')
-    results_mlf = os.path.join(TEMP_DIR, 'aligned.results')
-    if state_align:
-        state_mlf = os.path.join(TEMP_DIR, 'aligned_state.mlf')
-    else:
-        state_mlf = None
+    tmpdir = tempfile.mkdtemp(prefix='p2fa_')
+    try:
+        word_dictionary = os.path.join(tmpdir, 'dict')
+        input_mlf = os.path.join(tmpdir, 'tmp.mlf')
+        output_mlf = os.path.join(tmpdir, 'aligned.mlf')
+        results_mlf = os.path.join(tmpdir, 'aligned.results')
+        if state_align:
+            state_mlf = os.path.join(tmpdir, 'aligned_state.mlf')
+        else:
+            state_mlf = None
 
-    # create working directory
-    prep_working_directory()
+        # create ./tmp/dict by concatenating our dict with a local one
+        dict_files = [os.path.join(model_path, 'dict')]
+        if custom_dict is not None:
+            dict_files.append(custom_dict)
+        elif os.path.exists('dict.local'):
+            dict_files.append('dict.local')
+        with open(word_dictionary, 'w') as out:
+            for path in dict_files:
+                with open(path, 'r') as f:
+                    out.write(f.read())
 
-    # create ./tmp/dict by concatenating our dict with a local one
-    dict_files = [os.path.join(model_path, 'dict')]
-    if custom_dict is not None:
-        dict_files.append(custom_dict)
-    elif os.path.exists('dict.local'):
-        dict_files.append('dict.local')
-    with open(word_dictionary, 'w') as out:
-        for path in dict_files:
-            with open(path, 'r') as f:
-                out.write(f.read())
+        # prepare wavefile: do a resampling if necessary
+        tmpwav = os.path.join(tmpdir, 'sound.wav')
+        sr = prep_wav(wavfile, tmpwav, sr_override, wave_start, wave_end,
+                      sr_models)
 
-    # prepare wavefile: do a resampling if necessary
-    tmpwav = os.path.join(TEMP_DIR, 'sound.wav')
-    sr = prep_wav(wavfile, tmpwav, sr_override, wave_start, wave_end,
-                  sr_models)
+        if hmmsubdir == "FROM-SR":
+            hmmsubdir = str(sr)
 
-    if hmmsubdir == "FROM-SR":
-        hmmsubdir = str(sr)
+        # prepare mlfile
+        prep_mlf(trsfile, input_mlf, word_dictionary,
+                 surround_token, between_token)
 
-    # prepare mlfile
-    prep_mlf(trsfile, input_mlf, word_dictionary,
-             surround_token, between_token)
+        # prepare scp files
+        prep_scp(tmpwav, tmpdir)
 
-    # prepare scp files
-    prep_scp(tmpwav)
-
-    # generate the plp file using a given configuration file for HCopy
-    create_plp(os.path.join(model_path, hmmsubdir, 'config'), verbose=verbose)
-
-    # run Verterbi decoding
-    # print("Running HVite...")
-    mpfile = os.path.join(model_path, 'monophones')
-    if not os.path.exists(mpfile):
-        mpfile = os.path.join(model_path, 'hmmnames')
-
-    hmmdir = os.path.join(model_path, hmmsubdir)
-    viterbi(input_mlf, word_dictionary, output_mlf, mpfile, hmmdir,
+        # generate the plp file using a given configuration file for HCopy
+        create_plp(
+            os.path.join(model_path, hmmsubdir, 'config'),
+            tmpdir,
             verbose=verbose)
 
-    # compute actual recording duration for timestamp clamping
-    with wave.open(tmpwav, 'r') as f:
-        rec_duration = f.getnframes() / sr
+        # run Viterbi decoding
+        mpfile = os.path.join(model_path, 'monophones')
+        if not os.path.exists(mpfile):
+            mpfile = os.path.join(model_path, 'hmmnames')
 
-    if state_align:
-        viterbi(input_mlf, word_dictionary, state_mlf, mpfile, hmmdir,
-                state_align=True, verbose=verbose)
-        state_alignments = read_aligned_mlf(
-            state_mlf, sr, float(wave_start), duration=rec_duration)
-    else:
-        state_alignments = None
+        hmmdir = os.path.join(model_path, hmmsubdir)
+        viterbi(input_mlf, word_dictionary, output_mlf, mpfile, hmmdir,
+                tmpdir, verbose=verbose)
 
-    _alignments = read_aligned_mlf(
-        output_mlf, sr, float(wave_start), duration=rec_duration)
-    phoneme_alignments, word_alignments = make_alignment_lists(_alignments)
+        # compute actual recording duration for timestamp clamping
+        with wave.open(tmpwav, 'r') as f:
+            rec_duration = f.getnframes() / sr
 
-    av_score_per_frame = get_av_log_likelihood_per_frame(results_mlf)
+        if state_align:
+            viterbi(input_mlf, word_dictionary, state_mlf, mpfile, hmmdir,
+                    tmpdir, state_align=True, verbose=verbose)
+            state_alignments = read_aligned_mlf(
+                state_mlf, sr, float(wave_start), duration=rec_duration)
+        else:
+            state_alignments = None
 
-    # output the alignment as a Praat TextGrid, plus .words/.phones
-    # HTK label files
-    if outdir is not None:
-        os.makedirs(outdir, exist_ok=True)
-        stem = os.path.splitext(os.path.basename(wavfile))[0]
-        write_text_grid(
-            os.path.join(outdir, stem + '.TextGrid'),
-            _alignments,
-            state_alignments=state_alignments)
-        write_htk_label_file(
-            os.path.join(outdir, stem + '.words'),
-            word_alignments)
-        write_htk_label_file(
-            os.path.join(outdir, stem + '.phones'),
-            phoneme_alignments)
+        _alignments = read_aligned_mlf(
+            output_mlf, sr, float(wave_start), duration=rec_duration)
+        phoneme_alignments, word_alignments = make_alignment_lists(_alignments)
 
-    # clean directory
-    delete_working_directory()
+        av_score_per_frame = get_av_log_likelihood_per_frame(results_mlf)
+
+        # output the alignment as a Praat TextGrid, plus .words/.phones
+        # HTK label files
+        if outdir is not None:
+            os.makedirs(outdir, exist_ok=True)
+            stem = os.path.splitext(os.path.basename(wavfile))[0]
+            write_text_grid(
+                os.path.join(outdir, stem + '.TextGrid'),
+                _alignments,
+                state_alignments=state_alignments)
+            write_htk_label_file(
+                os.path.join(outdir, stem + '.words'),
+                word_alignments)
+            write_htk_label_file(
+                os.path.join(outdir, stem + '.phones'),
+                phoneme_alignments)
+
+    finally:
+        shutil.rmtree(tmpdir)
+
     if not state_align:
         return phoneme_alignments, word_alignments, av_score_per_frame
     else:
