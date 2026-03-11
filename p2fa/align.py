@@ -293,6 +293,9 @@ def read_aligned_mlf(mlffile, sr, wave_start, duration=None):
     ValueError
         If the MLF file contains fewer than 3 lines, indicating that
         alignment did not complete successfully.
+    ValueError
+        If no phone segments remain after filtering out unrealised words,
+        indicating an empty transcript or a failed alignment.
     """
     # TODO: extract log-likelihood score
     with open(mlffile, 'r') as f:
@@ -329,6 +332,11 @@ def read_aligned_mlf(mlffile, sr, wave_start, duration=None):
     # Remove any words that have no phones (e.g. optional silences that
     # were not realised).
     ret = [w for w in ret if len(w) > 1]
+
+    if not ret:
+        raise ValueError(
+            'Alignment produced no phone segments. The transcript may be '
+            'empty or no words could be aligned to the audio.')
 
     # If no duration was supplied, estimate it from the last parsed offset
     # (before clamping), using the same conversion pipeline as above.
