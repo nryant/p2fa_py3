@@ -11,7 +11,9 @@
                            (in seconds, default to end)
         -t state_align   -- align HMM states (eg. s1, s2, s3)
                            additionally; default=0
-        -v verbose       -- print HCopy and HVite commandline; default=0
+        --debug          -- enable debug mode: print HCopy and HVite
+                           commandlines and preserve the temporary
+                           working directory after completion
 
     output_dir is created if it does not exist. Three output files are
     written to that directory, each sharing the base name of the input
@@ -30,7 +32,8 @@
     2018-08-21  papagandalf, This file was modified so that it can be
                 called from Python code
     2020-06-20 JK, command-line option fixed;
-                   verbose option added for debugging;
+                   verbose option added for debugging (later replaced by
+                   --debug flag);
                    state-level alignment added;
     2026-03-11  default sampling rate changed to 16000;
                 output_dir replaces output_file at command line;
@@ -539,7 +542,7 @@ def prep_scp(wavfile, tmpdir):
         fw.write(os.path.join(tmpdir, 'tmp.plp') + '\n')
 
 
-def create_plp(hcopy_config, tmpdir, verbose=False):
+def create_plp(hcopy_config, tmpdir, debug=False):
     """Run HCopy to extract PLP features from the prepared wav file.
 
     Reads the wav file listed in ``codetr.scp`` and writes PLP features
@@ -552,7 +555,7 @@ def create_plp(hcopy_config, tmpdir, verbose=False):
         Path to the HCopy configuration file for the target sample rate.
     tmpdir : str
         Path to the temporary working directory for this run.
-    verbose : bool, optional
+    debug : bool, optional
         If True, print the HCopy command before executing it.
         Default is False.
     """
@@ -560,14 +563,16 @@ def create_plp(hcopy_config, tmpdir, verbose=False):
         'HCopy', '-T', '1',
         '-C', hcopy_config,
         '-S', os.path.join(tmpdir, 'codetr.scp')]
-    if verbose:
+    if debug:
         print('creating plp...\n', ' '.join(cmd))
-
-    subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True)
+    else:
+        subprocess.run(cmd, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
-            tmpdir, state_align=False, verbose=False):
+            tmpdir, state_align=False, debug=False):
     """Run HVite to perform Viterbi forced alignment.
 
     Aligns the PLP features in ``tmp.plp`` in *tmpdir* against the word
@@ -594,7 +599,7 @@ def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
     state_align : bool, optional
         If True, pass ``-f -y lab`` to HVite to produce HMM state-level
         alignments in addition to phone-level ones. Default is False.
-    verbose : bool, optional
+    debug : bool, optional
         If True, print the HVite command before executing it.
         Default is False.
     """
@@ -612,17 +617,18 @@ def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
         word_dictionary,
         phoneset]
 
-    if verbose:
+    if debug:
         print('running viterbi...\n', ' '.join(cmd))
 
     results_file = os.path.join(tmpdir, 'aligned.results')
     with open(results_file, 'w') as f:
-        subprocess.run(cmd, check=True, stdout=f)
+        subprocess.run(cmd, check=True, stdout=f,
+                       stderr=None if debug else subprocess.DEVNULL)
 
 
 def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
           sr_override=None, model_path=None, custom_dict=None,
-          state_align=False, verbose=False):
+          state_align=False, debug=False):
     """Forced-align a wav file to its transcript using P2FA acoustic models.
 
     Prepares input files, runs HCopy (PLP feature extraction) and HVite
@@ -663,9 +669,10 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
     state_align : bool or int, optional
         If True (or 1), also produce HMM state-level alignments.
         Default is False.
-    verbose : bool or int, optional
-        If True (or 1), print HCopy and HVite commands before executing
-        them. Default is False.
+    debug : bool, optional
+        If True, print HCopy and HVite commands before executing them
+        and preserve the temporary working directory on exit.
+        Default is False.
 
     Returns
     -------
@@ -740,7 +747,7 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
         create_plp(
             os.path.join(model_path, hmmsubdir, 'config'),
             tmpdir,
-            verbose=verbose)
+            debug=debug)
 
         # run Viterbi decoding
         mpfile = os.path.join(model_path, 'monophones')
@@ -749,7 +756,7 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
 
         hmmdir = os.path.join(model_path, hmmsubdir)
         viterbi(input_mlf, word_dictionary, output_mlf, mpfile, hmmdir,
-                tmpdir, verbose=verbose)
+                tmpdir, debug=debug)
 
         # compute actual recording duration for timestamp clamping
         with wave.open(tmpwav, 'r') as f:
@@ -757,7 +764,7 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
 
         if state_align:
             viterbi(input_mlf, word_dictionary, state_mlf, mpfile, hmmdir,
-                    tmpdir, state_align=True, verbose=verbose)
+                    tmpdir, state_align=True, debug=debug)
             state_alignments = read_aligned_mlf(
                 state_mlf, sr, float(wave_start), duration=rec_duration)
         else:
@@ -786,7 +793,10 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
                 phoneme_alignments)
 
     finally:
-        shutil.rmtree(tmpdir)
+        if debug:
+            print('debug: temporary working directory preserved at', tmpdir)
+        else:
+            shutil.rmtree(tmpdir)
 
     if not state_align:
         return phoneme_alignments, word_alignments, av_score_per_frame
@@ -823,9 +833,9 @@ if __name__ == '__main__':
                         default=0, choices=[0, 1],
                         help='align HMM states (eg. s1, s2, s3)'
                              ' additionally; default=0')
-    parser.add_argument('-v', '--verbose', metavar='VERBOSE', type=int,
-                        default=0, choices=[0, 1],
-                        help='print HCopy and HVite commandlines; default=0')
+    parser.add_argument('--debug', action='store_true', default=False,
+                        help='enable debug mode: print HCopy/HVite commands'
+                             ' and preserve the temporary working directory')
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -837,4 +847,4 @@ if __name__ == '__main__':
           wave_start=args.start_time, wave_end=args.end_time,
           sr_override=args.sampling_rate, model_path=None, custom_dict=None,
           state_align=int(args.state_align),
-          verbose=int(args.verbose))
+          debug=args.debug)
