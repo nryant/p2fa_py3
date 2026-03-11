@@ -3,18 +3,23 @@
 """ Command-line usage:
       python3 align.py [options] wave_file transcript_file output_dir
       where options may include:
-        -r sampling_rate -- override which sample rate model to use, one of 8000, 11025, and 16000
-                           (default: 16000)
-        -s start_time    -- start of portion of wavfile to align (in seconds, default 0)
-        -e end_time      -- end of portion of wavfile to align (in seconds, default to end)
-        -t state_align   -- align HMM states (eg. s1, s2, s3) additionally; default=0
+        -r sampling_rate -- override which sample rate model to use,
+                           one of 8000, 11025, and 16000 (default: 16000)
+        -s start_time    -- start of portion of wavfile to align
+                           (in seconds, default 0)
+        -e end_time      -- end of portion of wavfile to align
+                           (in seconds, default to end)
+        -t state_align   -- align HMM states (eg. s1, s2, s3)
+                           additionally; default=0
         -v verbose       -- print HCopy and HVite commandline; default=0
 
-    output_dir is created if it does not exist. Three output files are written
-    to that directory, each sharing the base name of the input wav file:
-        <basename>.TextGrid  -- Praat TextGrid with phone and word interval tiers
-        <basename>.words     -- word-level alignment in HTK label file format
-        <basename>.phones    -- phone-level alignment in HTK label file format
+    output_dir is created if it does not exist. Three output files are
+    written to that directory, each sharing the base name of the input
+    wav file:
+        <basename>.TextGrid  -- Praat TextGrid with phone and word
+                               interval tiers
+        <basename>.words     -- word-level alignment in HTK label format
+        <basename>.phones    -- phone-level alignment in HTK label format
 
     HTK label files are tab-delimited with one segment per line:
         onset (s) <TAB> offset (s) <TAB> label
@@ -22,10 +27,15 @@
     You can also import this file as a module and use the functions directly.
 
     2018-02-22 JK, This file was modified for Python3.x
-    2018-08-21  papagandalf, This file was modified so that it can be called from Python code
-    2020-06-20 JK, command-line option fixed; 
+    2018-08-21  papagandalf, This file was modified so that it can be
+                called from Python code
+    2020-06-20 JK, command-line option fixed;
                    verbose option added for debugging;
                    state-level alignment added;
+    2026-03-11  default sampling rate changed to 16000;
+                output_dir replaces output_file at command line;
+                .words and .phones HTK label files now written alongside
+                TextGrid; PEP8 compliance updates
 """
 
 import os
@@ -108,7 +118,8 @@ def prep_mlf(trsfile, mlffile, word_dictionary, surround, between):
         txt = txt.replace('{laugh}', '{LG}').replace('{laughter}', '{LG}')
         txt = txt.replace('{cough}', '{CG}').replace('{lipsmack}', '{LS}')
 
-        for pun in [',', '.', ':', ';', '!', '?', '"', '%', '(', ')', '--', '---']:
+        for pun in [',', '.', ':', ';', '!', '?', '"', '%',
+                    '(', ')', '--', '---']:
             txt = txt.replace(pun, '')
 
         txt = txt.upper()
@@ -148,45 +159,6 @@ def write_input_mlf(mlffile, words):
     fw.close()
 
 
-# def read_aligned_mlf(mlffile, sr, wave_start):
-#     # This reads a MLFalignment output  file with phone and word
-#     # alignments and returns a list of words, each word is a list containing
-#     # the word label followed by the phones, each phone is a tuple
-#     # (phone, start_time, end_time) with times in seconds.
-
-#     f = open(mlffile, 'r')
-#     lines = [l.rstrip() for l in f.readlines()]
-#     f.close()
-
-#     if len(lines) < 3:
-#         raise ValueError("Alignment did not complete succesfully.")
-
-#     j = 2
-#     ret = []
-#     while lines[j] != '.':
-#         # Is this the start of a word; do we have a word label?
-#         if len(lines[j].split()) == 5:
-#             # Make a new word list in ret and put the word label at the beginning
-#             wrd = lines[j].split()[4]
-#             ret.append([wrd])
-
-#         # Append this phone to the latest word (sub-)list
-#         ph = lines[j].split()[2]
-#         if sr == 11025:
-#             st = (float(lines[j].split()[0]) /
-#                   10000000.0 + 0.0125) * (11000.0 / 11025.0)
-#             en = (float(lines[j].split()[1]) /
-#                   10000000.0 + 0.0125) * (11000.0 / 11025.0)
-#         else:
-#             st = float(lines[j].split()[0]) / 10000000.0 + 0.0125
-#             en = float(lines[j].split()[1]) / 10000000.0 + 0.0125
-#         if st < en:
-#             ret[-1].append([ph, st + wave_start, en + wave_start])
-
-#         j += 1
-
-#     return ret
-
 def read_aligned_mlf(mlffile, SR, wave_start):
     # This reads a MLFalignment output  file with phone and word
     # alignments and returns a list of words, each word is a list containing
@@ -194,36 +166,38 @@ def read_aligned_mlf(mlffile, SR, wave_start):
     # (phone, start_time, end_time) with times in seconds.
     #
     # TODO: extract log-likelihood score
-    
     f = open(mlffile, 'r')
-    lines = [l.rstrip() for l in f.readlines()]
+    lines = [line.rstrip() for line in f.readlines()]
     f.close()
 
-    if len(lines) < 3 :
+    if len(lines) < 3:
         raise ValueError("Alignment did not complete succesfully.")
-        
+
     j = 2
-    phon = []
     ret = []
-    while (lines[j] != '.'):
-        if (len(lines[j].split()) >= 5): # Is this the start of a word; do we have a word label?
-            # Make a new word list in ret and put the word label at the beginning
+    while lines[j] != '.':
+        # Is this the start of a word; do we have a word label?
+        if len(lines[j].split()) >= 5:
+            # Make a new word list in ret and put the word label
+            # at the beginning
             wrd = lines[j].split()[4]
             ret.append([wrd])
-    
+
         # Append this phone to the latest word (sub-)list
         ph = lines[j].split()[2]
-        if (SR == 11025):
-            st = (float(lines[j].split()[0])/10000000.0 + 0.0125)*(11000.0/11025.0)
-            en = (float(lines[j].split()[1])/10000000.0 + 0.0125)*(11000.0/11025.0)
+        if SR == 11025:
+            st = (float(lines[j].split()[0]) / 10000000.0
+                  + 0.0125) * (11000.0 / 11025.0)
+            en = (float(lines[j].split()[1]) / 10000000.0
+                  + 0.0125) * (11000.0 / 11025.0)
         else:
-            st = float(lines[j].split()[0])/10000000.0 + 0.0125
-            en = float(lines[j].split()[1])/10000000.0 + 0.0125   
+            st = float(lines[j].split()[0]) / 10000000.0 + 0.0125
+            en = float(lines[j].split()[1]) / 10000000.0 + 0.0125
         if st < en:
-            ret[-1].append([ph, st+wave_start, en+wave_start])
- 
+            ret[-1].append([ph, st + wave_start, en + wave_start])
+
         j += 1
-    
+
     return ret
 
 
@@ -256,29 +230,30 @@ def get_av_log_likelihood_per_frame(file_path):
     return float(score)
 
 
-def write_text_grid(outfile, word_alignments, state_alignments=None) :
+def write_text_grid(outfile, word_alignments, state_alignments=None):
     # make the list of just phone alignments
     phons = []
-    for wrd in word_alignments :
-        phons.extend(wrd[1:]) # skip the word label
+    for wrd in word_alignments:
+        phons.extend(wrd[1:])  # skip the word label
 
     # make the list of just state alignments
     if state_alignments is not None:
         states = []
         for sts in state_alignments:
-            states.extend(sts[1:]) # skip the phone label
-    
+            states.extend(sts[1:])  # skip the phone label
+
     # make the list of just word alignments
     # we're getting elements of the form:
     #   ["word label", ["phone1", start, end], ["phone2", start, end], ...]
     wrds = []
-    for wrd in word_alignments :
+    for wrd in word_alignments:
         # If no phones make up this word, then it was an optional word
         # like a pause that wasn't actually realized.
-        if len(wrd) == 1 :
+        if len(wrd) == 1:
             continue
-        wrds.append([wrd[0], wrd[1][1], wrd[-1][2]]) # word label, first phone start time, last phone end time
-    
+        # word label, first phone start time, last phone end time
+        wrds.append([wrd[0], wrd[1][1], wrd[-1][2]])
+
     fw = open(outfile, 'w')
     fw.write('File type = "ooTextFile short"\n')
     fw.write('"TextGrid"\n')
@@ -291,7 +266,7 @@ def write_text_grid(outfile, word_alignments, state_alignments=None) :
     else:
         fw.write('2\n')
 
-    #write the state interval tier
+    # write the state interval tier
     if state_alignments is not None:
         fw.write('"IntervalTier"\n')
         fw.write('"state"\n')
@@ -302,8 +277,8 @@ def write_text_grid(outfile, word_alignments, state_alignments=None) :
             fw.write(str(states[k][1]) + '\n')
             fw.write(str(states[k][2]) + '\n')
             fw.write('"' + states[k][0] + '"' + '\n')
-        
-    #write the phone interval tier
+
+    # write the phone interval tier
     fw.write('"IntervalTier"\n')
     fw.write('"phone"\n')
     fw.write(str(phons[0][1]) + '\n')
@@ -314,7 +289,7 @@ def write_text_grid(outfile, word_alignments, state_alignments=None) :
         fw.write(str(phons[k][2]) + '\n')
         fw.write('"' + phons[k][0] + '"' + '\n')
 
-    #write the word interval tier
+    # write the word interval tier
     fw.write('"IntervalTier"\n')
     fw.write('"word"\n')
     fw.write(str(phons[0][1]) + '\n')
@@ -326,9 +301,9 @@ def write_text_grid(outfile, word_alignments, state_alignments=None) :
         fw.write('"' + wrds[k][0] + '"' + '\n')
     fw.write(str(wrds[-1][1]) + '\n')
     fw.write(str(phons[-1][2]) + '\n')
-    fw.write('"' + wrds[-1][0] + '"' + '\n')  
-    
-    fw.close()    
+    fw.write('"' + wrds[-1][0] + '"' + '\n')
+
+    fw.close()
 
 
 def write_htk_label_file(outfile, segments):
@@ -369,7 +344,6 @@ def prep_scp(wavfile):
 
 
 def create_plp(hcopy_config, verbose=False):
-    #os.system('HCopy -T 1 -C ' + hcopy_config + ' -S ' + os.path.join(TEMP_DIR, 'codetr.scp'))
     cmd = (
         'HCopy -T 1'
         f' -C {hcopy_config}'
@@ -381,7 +355,8 @@ def create_plp(hcopy_config, verbose=False):
     os.system(cmd)
 
 
-def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir, state_align=False, verbose=False):
+def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
+            state_align=False, verbose=False):
     if state_align:
         salign = ' -f -y lab'
     else:
@@ -400,17 +375,20 @@ def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir, state_alig
         f' {phoneset}'
         f' > {os.path.join(TEMP_DIR, "aligned.results")}'
         )
-    
+
     if verbose:
         print('running viterbi...\n', cmd)
     os.system(cmd)
 
 
-def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None, sr_override=None, model_path=None, custom_dict=None, state_align=False, verbose=False):
+def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
+          sr_override=None, model_path=None, custom_dict=None,
+          state_align=False, verbose=False):
     surround_token = "sp"
     between_token = "sp"
 
-    # If no model directory was said explicitly, get directory containing this script.
+    # If no model directory was said explicitly, get directory
+    # containing this script.
     hmmsubdir = ""
     sr_models = None
     if model_path is None:
@@ -420,7 +398,8 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None, sr_ove
         # the signal must be resampled to one of these rates.
         sr_models = [8000, 11025, 16000]
 
-    if sr_override is not None and sr_models is not None and sr_override not in sr_models:
+    if (sr_override is not None and sr_models is not None
+            and sr_override not in sr_models):
         raise Exception("invalid sample rate: not an acoustic model available")
 
     word_dictionary = os.path.join(TEMP_DIR, 'dict')
@@ -437,16 +416,19 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None, sr_ove
 
     # create ./tmp/dict by concatening our dict with a local one
     if custom_dict is not None:
-        os.system("cat " + model_path + "/dict " + custom_dict + " > " + word_dictionary)
+        os.system("cat " + model_path + "/dict " + custom_dict
+                  + " > " + word_dictionary)
     else:
         if os.path.exists("dict.local"):
-            os.system("cat " + model_path + "/dict dict.local > " + word_dictionary)
+            os.system("cat " + model_path + "/dict dict.local > "
+                      + word_dictionary)
         else:
             os.system("cat " + model_path + "/dict > " + word_dictionary)
 
     # prepare wavefile: do a resampling if necessary
     tmpwav = os.path.join(TEMP_DIR, 'sound.wav')
-    sr = prep_wav(wavfile, tmpwav, sr_override, wave_start, wave_end, sr_models)
+    sr = prep_wav(wavfile, tmpwav, sr_override, wave_start, wave_end,
+                  sr_models)
 
     if hmmsubdir == "FROM-SR":
         hmmsubdir = str(sr)
@@ -466,10 +448,13 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None, sr_ove
     mpfile = os.path.join(model_path, 'monophones')
     if not os.path.exists(mpfile):
         mpfile = os.path.join(model_path, 'hmmnames')
-    
-    viterbi(input_mlf, word_dictionary, output_mlf, mpfile, os.path.join(model_path, hmmsubdir), verbose=verbose)
+
+    hmmdir = os.path.join(model_path, hmmsubdir)
+    viterbi(input_mlf, word_dictionary, output_mlf, mpfile, hmmdir,
+            verbose=verbose)
     if state_align:
-        viterbi(input_mlf, word_dictionary, state_mlf, mpfile, os.path.join(model_path, hmmsubdir), state_align=True, verbose=verbose)
+        viterbi(input_mlf, word_dictionary, state_mlf, mpfile, hmmdir,
+                state_align=True, verbose=verbose)
         state_alignments = read_aligned_mlf(state_mlf, sr, float(wave_start))
     else:
         state_alignments = None
@@ -479,7 +464,8 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None, sr_ove
 
     av_score_per_frame = get_av_log_likelihood_per_frame(results_mlf)
 
-    # output the alignment as a Praat TextGrid, plus .words/.phones HTK label files
+    # output the alignment as a Praat TextGrid, plus .words/.phones
+    # HTK label files
     if outdir is not None:
         os.makedirs(outdir, exist_ok=True)
         stem = os.path.splitext(os.path.basename(wavfile))[0]
@@ -499,33 +485,41 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None, sr_ove
     if not state_align:
         return phoneme_alignments, word_alignments, av_score_per_frame
     else:
-        return phoneme_alignments, word_alignments, state_alignments, av_score_per_frame
+        return (phoneme_alignments, word_alignments,
+                state_alignments, av_score_per_frame)
 
 
 if __name__ == '__main__':
     import sys
     parser = argparse.ArgumentParser(
-        description='P2FA for Python3 (https://github.com/jaekookang/p2fa_py3)',
+        description='P2FA for Python3'
+                    ' (https://github.com/jaekookang/p2fa_py3)',
         add_help=True)
     parser.add_argument('wavfile', metavar='WAVFILE', type=str,
-        help='Provide wav file with valid path')
+                        help='Provide wav file with valid path')
     parser.add_argument('trsfile', metavar='TRSFILE', type=str,
-        help='Provide transcription file (txt) with valid path')
+                        help='Provide transcription file (txt)'
+                             ' with valid path')
     parser.add_argument('outdir', metavar='OUTDIR', type=str,
-        help='Output directory for alignment files (.TextGrid, .words, .phones)')
-    parser.add_argument('-r', '--sampling_rate', metavar='SR', type=int, default=16000,
-        choices=[8000, 11025, 16000],
-        help='override which sample rate model to use, one of 8000, 11025, and 16000')
+                        help='Output directory for alignment files'
+                             ' (.TextGrid, .words, .phones)')
+    parser.add_argument('-r', '--sampling_rate', metavar='SR', type=int,
+                        default=16000, choices=[8000, 11025, 16000],
+                        help='override which sample rate model to use,'
+                             ' one of 8000, 11025, and 16000')
     parser.add_argument('-s', '--start_time', metavar='START', default='0.0',
-        help='start of portion of wavfile to align (in seconds, default 0)')
+                        help='start of portion of wavfile to align'
+                             ' (in seconds, default 0)')
     parser.add_argument('-e', '--end_time', metavar='END', default=None,
-        help='end of portion of wavfile to align (in seconds, default to end)')
+                        help='end of portion of wavfile to align'
+                             ' (in seconds, default to end)')
     parser.add_argument('-t', '--state_align', metavar='STATE_ALIGN', type=int,
-        default=0, choices=[0, 1],
-        help='align HMM states (eg. s1, s2, s3) additionally; default=0')
+                        default=0, choices=[0, 1],
+                        help='align HMM states (eg. s1, s2, s3)'
+                             ' additionally; default=0')
     parser.add_argument('-v', '--verbose', metavar='VERBOSE', type=int,
-        default=0, choices=[0, 1],
-        help='print HCopy and HVite commandlines; default=0')
+                        default=0, choices=[0, 1],
+                        help='print HCopy and HVite commandlines; default=0')
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -534,7 +528,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     align(args.wavfile, args.trsfile, outdir=args.outdir,
-        wave_start=args.start_time, wave_end=args.end_time,
-        sr_override=args.sampling_rate, model_path=None, custom_dict=None,
-        state_align=int(args.state_align),
-        verbose=int(args.verbose))
+          wave_start=args.start_time, wave_end=args.end_time,
+          sr_override=args.sampling_rate, model_path=None, custom_dict=None,
+          state_align=int(args.state_align),
+          verbose=int(args.verbose))
