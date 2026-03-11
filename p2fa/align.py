@@ -1,13 +1,23 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """ Command-line usage:
-      python align.py [options] wave_file transcript_file output_file
+      python3 align.py [options] wave_file transcript_file output_dir
       where options may include:
         -r sampling_rate -- override which sample rate model to use, one of 8000, 11025, and 16000
+                           (default: 16000)
         -s start_time    -- start of portion of wavfile to align (in seconds, default 0)
         -e end_time      -- end of portion of wavfile to align (in seconds, default to end)
         -t state_align   -- align HMM states (eg. s1, s2, s3) additionally; default=0
         -v verbose       -- print HCopy and HVite commandline; default=0
+
+    output_dir is created if it does not exist. Three output files are written
+    to that directory, each sharing the base name of the input wav file:
+        <basename>.TextGrid  -- Praat TextGrid with phone and word interval tiers
+        <basename>.words     -- word-level alignment in HTK label file format
+        <basename>.phones    -- phone-level alignment in HTK label file format
+
+    HTK label files are tab-delimited with one segment per line:
+        onset (s) <TAB> offset (s) <TAB> label
 
     You can also import this file as a module and use the functions directly.
 
@@ -321,6 +331,22 @@ def write_text_grid(outfile, word_alignments, state_alignments=None) :
     fw.close()    
 
 
+def write_htk_label_file(outfile, segments):
+    """Write an HTK label file with one segment per line.
+
+    Parameters
+    ----------
+    outfile : str
+        Path to the output HTK label file.
+    segments : list of list
+        Each element is ``[label, onset, offset]`` where *onset* and
+        *offset* are times in seconds.
+    """
+    with open(outfile, 'w') as f:
+        for label, onset, offset in segments:
+            f.write(f'{onset}\t{offset}\t{label}\n')
+
+
 def prep_working_directory():
     delete_working_directory()
     os.mkdir(TEMP_DIR)
@@ -380,7 +406,7 @@ def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir, state_alig
     os.system(cmd)
 
 
-def align(wavfile, trsfile, outfile=None, wave_start='0.0', wave_end=None, sr_override=None, model_path=None, custom_dict=None, state_align=False, verbose=False):
+def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None, sr_override=None, model_path=None, custom_dict=None, state_align=False, verbose=False):
     surround_token = "sp"
     between_token = "sp"
 
@@ -453,9 +479,20 @@ def align(wavfile, trsfile, outfile=None, wave_start='0.0', wave_end=None, sr_ov
 
     av_score_per_frame = get_av_log_likelihood_per_frame(results_mlf)
 
-    # output the alignment as a Praat TextGrid
-    if outfile is not None:
-        write_text_grid(outfile, _alignments, state_alignments=state_alignments)
+    # output the alignment as a Praat TextGrid, plus .words/.phones HTK label files
+    if outdir is not None:
+        os.makedirs(outdir, exist_ok=True)
+        stem = os.path.splitext(os.path.basename(wavfile))[0]
+        write_text_grid(
+            os.path.join(outdir, stem + '.TextGrid'),
+            _alignments,
+            state_alignments=state_alignments)
+        write_htk_label_file(
+            os.path.join(outdir, stem + '.words'),
+            word_alignments)
+        write_htk_label_file(
+            os.path.join(outdir, stem + '.phones'),
+            phoneme_alignments)
 
     # clean directory
     delete_working_directory()
@@ -466,25 +503,38 @@ def align(wavfile, trsfile, outfile=None, wave_start='0.0', wave_end=None, sr_ov
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='P2FA for Python3 (https://github.com/jaekookang/p2fa_py3)')
-    parser.add_argument('wavfile', type=str, help='Provide wav file with valid path')
-    parser.add_argument('trsfile', type=str, help='Provide transcription file (txt) with valid path')
-    parser.add_argument('outfile', type=str, help='Provide output filename (TextGrid) with valid path')
-    parser.add_argument('-r', '--sampling_rate', type=int, default=11025, choices=[8000,11025,16000],
+    import sys
+    parser = argparse.ArgumentParser(
+        description='P2FA for Python3 (https://github.com/jaekookang/p2fa_py3)',
+        add_help=True)
+    parser.add_argument('wavfile', metavar='WAVFILE', type=str,
+        help='Provide wav file with valid path')
+    parser.add_argument('trsfile', metavar='TRSFILE', type=str,
+        help='Provide transcription file (txt) with valid path')
+    parser.add_argument('outdir', metavar='OUTDIR', type=str,
+        help='Output directory for alignment files (.TextGrid, .words, .phones)')
+    parser.add_argument('-r', '--sampling_rate', metavar='SR', type=int, default=16000,
+        choices=[8000, 11025, 16000],
         help='override which sample rate model to use, one of 8000, 11025, and 16000')
-    parser.add_argument('-s', '--start_time', default='0.0', 
+    parser.add_argument('-s', '--start_time', metavar='START', default='0.0',
         help='start of portion of wavfile to align (in seconds, default 0)')
-    parser.add_argument('-e', '--end_time', default=None, 
-        help='end of portion of wavfile to align (in seconds, defaul to end)')
-    parser.add_argument('-t', '--state_align', type=int, default=0, choices=[0, 1], 
+    parser.add_argument('-e', '--end_time', metavar='END', default=None,
+        help='end of portion of wavfile to align (in seconds, default to end)')
+    parser.add_argument('-t', '--state_align', metavar='STATE_ALIGN', type=int,
+        default=0, choices=[0, 1],
         help='align HMM states (eg. s1, s2, s3) additionally; default=0')
-    parser.add_argument('-v', '--verbose', type=int, default='0', choices=[0, 1], 
+    parser.add_argument('-v', '--verbose', metavar='VERBOSE', type=int,
+        default=0, choices=[0, 1],
         help='print HCopy and HVite commandlines; default=0')
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(1)
 
     args = parser.parse_args()
 
-    align(args.wavfile, args.trsfile, outfile=args.outfile, 
-        wave_start=args.start_time, wave_end=args.end_time, 
-        sr_override=args.sampling_rate, model_path=None, custom_dict=None, 
+    align(args.wavfile, args.trsfile, outdir=args.outdir,
+        wave_start=args.start_time, wave_end=args.end_time,
+        sr_override=args.sampling_rate, model_path=None, custom_dict=None,
         state_align=int(args.state_align),
         verbose=int(args.verbose))
