@@ -35,7 +35,7 @@
     2026-03-11  default sampling rate changed to 16000;
                 output_dir replaces output_file at command line;
                 .words and .phones HTK label files now written alongside
-                TextGrid; PEP8 compliance updates
+                TextGrid;
 """
 
 import os
@@ -59,7 +59,7 @@ def prep_wav(orig_wav, out_wav, sr_override, wave_start, wave_end, sr_models):
         return sr
 
     f = wave.open(orig_wav, 'r')
-    SR = f.getframerate()
+    sr = f.getframerate()
     f.close()
 
     soxopts = ""
@@ -68,22 +68,22 @@ def prep_wav(orig_wav, out_wav, sr_override, wave_start, wave_end, sr_models):
         if wave_end is not None:
             soxopts += " " + str(float(wave_end) - float(wave_start))
 
-    if (sr_models is not None and SR not in sr_models) or (
-            sr_override is not None and SR != sr_override) or soxopts != "":
+    if (sr_models is not None and sr not in sr_models) or (
+            sr_override is not None and sr != sr_override) or soxopts != "":
         new_sr = 11025
         if sr_override is not None:
             new_sr = sr_override
 
-        print("Resampling wav file from " + str(SR) +
+        print("Resampling wav file from " + str(sr) +
               " to " + str(new_sr) + soxopts + "...")
-        SR = new_sr
-        os.system("sox " + orig_wav + " -r " + str(SR) +
+        sr = new_sr
+        os.system("sox " + orig_wav + " -r " + str(sr) +
                   " " + out_wav + " " + soxopts)
     else:
-        # print("Using wav file, already at sampling rate " + str(SR) + ".")
+        # print("Using wav file, already at sampling rate " + str(sr) + ".")
         os.system("cp -f " + orig_wav + " " + out_wav)
 
-    return SR
+    return sr
 
 
 def prep_mlf(trsfile, mlffile, word_dictionary, surround, between):
@@ -159,7 +159,47 @@ def write_input_mlf(mlffile, words):
     fw.close()
 
 
-def read_aligned_mlf(mlffile, SR, wave_start):
+# def read_aligned_mlf(mlffile, sr, wave_start):
+#     # This reads a MLFalignment output  file with phone and word
+#     # alignments and returns a list of words, each word is a list containing
+#     # the word label followed by the phones, each phone is a tuple
+#     # (phone, start_time, end_time) with times in seconds.
+
+#     f = open(mlffile, 'r')
+#     lines = [l.rstrip() for l in f.readlines()]
+#     f.close()
+
+#     if len(lines) < 3:
+#         raise ValueError("Alignment did not complete succesfully.")
+
+#     j = 2
+#     ret = []
+#     while lines[j] != '.':
+#         # Is this the start of a word; do we have a word label?
+#         if len(lines[j].split()) == 5:
+#             # Make a new word list in ret and put the word label
+#             # at the beginning
+#             wrd = lines[j].split()[4]
+#             ret.append([wrd])
+
+#         # Append this phone to the latest word (sub-)list
+#         ph = lines[j].split()[2]
+#         if sr == 11025:
+#             st = (float(lines[j].split()[0]) /
+#                   10000000.0 + 0.0125) * (11000.0 / 11025.0)
+#             en = (float(lines[j].split()[1]) /
+#                   10000000.0 + 0.0125) * (11000.0 / 11025.0)
+#         else:
+#             st = float(lines[j].split()[0]) / 10000000.0 + 0.0125
+#             en = float(lines[j].split()[1]) / 10000000.0 + 0.0125
+#         if st < en:
+#             ret[-1].append([ph, st + wave_start, en + wave_start])
+
+#         j += 1
+
+#     return ret
+
+def read_aligned_mlf(mlffile, sr, wave_start):
     # This reads a MLFalignment output  file with phone and word
     # alignments and returns a list of words, each word is a list containing
     # the word label followed by the phones, each phone is a tuple
@@ -185,7 +225,7 @@ def read_aligned_mlf(mlffile, SR, wave_start):
 
         # Append this phone to the latest word (sub-)list
         ph = lines[j].split()[2]
-        if SR == 11025:
+        if sr == 11025:
             st = (float(lines[j].split()[0]) / 10000000.0
                   + 0.0125) * (11000.0 / 11025.0)
             en = (float(lines[j].split()[1]) / 10000000.0
@@ -344,6 +384,8 @@ def prep_scp(wavfile):
 
 
 def create_plp(hcopy_config, verbose=False):
+    # os.system('HCopy -T 1 -C ' + hcopy_config
+    #           + ' -S ' + os.path.join(TEMP_DIR, 'codetr.scp'))
     cmd = (
         'HCopy -T 1'
         f' -C {hcopy_config}'
