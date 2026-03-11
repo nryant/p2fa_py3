@@ -81,6 +81,36 @@ def htk_to_seconds(htk_time):
 
 
 def prep_wav(orig_wav, out_wav, sr_override, wave_start, wave_end, sr_models):
+    """Prepare a wav file for HTK alignment, resampling or trimming as needed.
+
+    Reads the sample rate of *orig_wav*. If the rate is not in *sr_models*,
+    differs from *sr_override*, or a time range has been requested, the file
+    is resampled and/or trimmed with sox and written to *out_wav*. Otherwise
+    *orig_wav* is copied to *out_wav* unchanged.
+
+    Parameters
+    ----------
+    orig_wav : str
+        Path to the original input wav file.
+    out_wav : str
+        Path to write the prepared wav file.
+    sr_override : int or None
+        If not None, force resampling to this sample rate (Hz).
+    wave_start : str
+        Start time of the region to align, in seconds.
+    wave_end : str or None
+        End time of the region to align, in seconds. If None, align to
+        the end of the file.
+    sr_models : list of int or None
+        Sample rates for which acoustic models are available. If the
+        file's native rate is not in this list it will be resampled.
+        Pass None to skip this check.
+
+    Returns
+    -------
+    int
+        Sample rate (Hz) of the prepared wav file.
+    """
     if os.path.exists(out_wav) and False:
         f = wave.open(out_wav, 'r')
         sr = f.getframerate()
@@ -116,6 +146,30 @@ def prep_wav(orig_wav, out_wav, sr_override, wave_start, wave_end, sr_models):
 
 
 def prep_mlf(trsfile, mlffile, word_dictionary, surround, between):
+    """Prepare an HTK Master Label File (MLF) from a plain-text transcript.
+
+    Reads *trsfile*, normalises the text (upper-casing, stripping
+    punctuation, expanding common non-speech tokens), filters out any
+    words not found in *word_dictionary*, and writes the result to
+    *mlffile* in HTK MLF format.
+
+    Parameters
+    ----------
+    trsfile : str
+        Path to the plain-text transcript file.
+    mlffile : str
+        Path to write the output MLF file.
+    word_dictionary : str
+        Path to the HTK pronunciation dictionary. Only words present in
+        this dictionary will be included; others are skipped with a
+        warning.
+    surround : str or None
+        Comma-separated token(s) to insert at the beginning and end of
+        the word sequence (e.g. ``'sp'``). Pass None to omit.
+    between : str or None
+        Token to insert between every pair of consecutive words
+        (e.g. ``'sp'`` for an optional silence). Pass None to omit.
+    """
     # Read in the dictionary to ensure all of the words
     # we put in the MLF file are in the dictionary. Words
     # that are not are skipped with a warning.
@@ -177,6 +231,15 @@ def prep_mlf(trsfile, mlffile, word_dictionary, surround, between):
 
 
 def write_input_mlf(mlffile, words):
+    """Write a word-level HTK Master Label File (MLF) for alignment input.
+
+    Parameters
+    ----------
+    mlffile : str
+        Path to the output MLF file.
+    words : list of str
+        Ordered list of word labels to write into the MLF.
+    """
     with open(mlffile, 'w') as fw:
         fw.write('#!MLF!#\n')
         fw.write('"*/tmp.lab"\n')
@@ -186,11 +249,50 @@ def write_input_mlf(mlffile, words):
 
 
 def read_aligned_mlf(mlffile, sr, wave_start, duration=None):
-    # This reads a MLFalignment output  file with phone and word
-    # alignments and returns a list of words, each word is a list containing
-    # the word label followed by the phones, each phone is a tuple
-    # (phone, start_time, end_time) with times in seconds.
-    #
+    """Read an HTK MLF alignment output file and return phone/word timings.
+
+    Parses the phone-level alignment produced by HVite and returns a
+    nested list grouping phones under their parent words. Timestamps are
+    converted from raw HTK 100 ns units to seconds, shifted by half the
+    PLP analysis window duration (``HTK_TS_SHIFT``) so that they
+    correspond to window centres, and offset by *wave_start*. For 11025
+    Hz audio an additional scaling correction is applied
+    (``HTK_SR_11025_SCALE``) because HTK internally treats that rate as
+    11000 Hz.
+
+    The first phone onset is clamped to *wave_start* and the last phone
+    offset is clamped to ``wave_start + duration`` to counteract any
+    overshoot introduced by the timestamp shift.
+
+    Parameters
+    ----------
+    mlffile : str
+        Path to the HTK MLF alignment output file.
+    sr : int
+        Sample rate (Hz) of the aligned audio.
+    wave_start : float or str
+        Start time (seconds) of the aligned region within the original
+        recording. Added to all timestamps so that they are expressed in
+        the coordinate system of the original file.
+    duration : float or None
+        Duration (seconds) of the aligned audio segment. Used to clamp
+        the final offset. If None, the duration is estimated from the
+        last parsed phone offset before clamping.
+
+    Returns
+    -------
+    list of list
+        One sub-list per word. Each sub-list begins with the word label
+        (str) followed by zero or more phone entries of the form
+        ``[label, onset, offset]`` where *onset* and *offset* are
+        times in seconds.
+
+    Raises
+    ------
+    ValueError
+        If the MLF file contains fewer than 3 lines, indicating that
+        alignment did not complete successfully.
+    """
     # TODO: extract log-likelihood score
     with open(mlffile, 'r') as f:
         lines = [line.rstrip() for line in f.readlines()]
@@ -237,6 +339,26 @@ def read_aligned_mlf(mlffile, sr, wave_start, duration=None):
 
 
 def make_alignment_lists(word_alignments):
+    """Flatten word-grouped alignments into separate phone and word lists.
+
+    Parameters
+    ----------
+    word_alignments : list of list
+        Output of :func:`read_aligned_mlf`. Each sub-list begins with a
+        word label followed by phone entries of the form
+        ``[label, onset, offset]``.
+
+    Returns
+    -------
+    phons : list of list
+        Flat list of all phone entries ``[label, onset, offset]`` in
+        order.
+    wrds : list of list
+        One entry per realised word (words with no phones, such as
+        optional silences that were not realised, are omitted). Each
+        entry is ``[label, onset, offset]`` where *onset* is the start
+        of the first phone and *offset* is the end of the last phone.
+    """
     # make the list of just phone alignments
     phons = []
     for wrd in word_alignments:
@@ -257,6 +379,18 @@ def make_alignment_lists(word_alignments):
 
 
 def get_av_log_likelihood_per_frame(file_path):
+    """Parse the average log-likelihood per frame from an HVite results file.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the HVite results file (``aligned.results``).
+
+    Returns
+    -------
+    float
+        Average log-likelihood per frame reported by HVite.
+    """
     with open(file_path, 'r') as f:
         lines = f.read().splitlines()
 
@@ -266,6 +400,25 @@ def get_av_log_likelihood_per_frame(file_path):
 
 
 def write_text_grid(outfile, word_alignments, state_alignments=None):
+    """Write a Praat TextGrid file from phone and word alignments.
+
+    Creates a TextGrid in short text format with an ``IntervalTier`` for
+    phones and an ``IntervalTier`` for words. If *state_alignments* are
+    provided, a third ``IntervalTier`` for HMM states is prepended.
+
+    Parameters
+    ----------
+    outfile : str
+        Path to write the output TextGrid file.
+    word_alignments : list of list
+        Output of :func:`read_aligned_mlf`. Each sub-list begins with a
+        word label followed by phone entries of the form
+        ``[label, onset, offset]``.
+    state_alignments : list of list or None
+        Optional HMM state alignments in the same nested format as
+        *word_alignments*, with phone labels as the outer grouping.
+        If None, no state tier is written.
+    """
     # make the list of just phone alignments
     phons = []
     for wrd in word_alignments:
@@ -356,11 +509,16 @@ def write_htk_label_file(outfile, segments):
 
 
 def prep_working_directory():
+    """Create a clean temporary working directory at ``TEMP_DIR``.
+
+    Any existing directory at that path is removed first.
+    """
     delete_working_directory()
     os.mkdir(TEMP_DIR)
 
 
 def delete_working_directory():
+    """Remove the temporary working directory at ``TEMP_DIR``, if it exists."""
     try:
         shutil.rmtree(TEMP_DIR)
     except OSError:
@@ -368,6 +526,20 @@ def delete_working_directory():
 
 
 def prep_scp(wavfile):
+    """Write the HTK SCP script files required by HCopy and HVite.
+
+    Creates two files in ``TEMP_DIR``:
+
+    * ``codetr.scp`` — maps *wavfile* to the PLP feature file path,
+      used by HCopy to generate features.
+    * ``test.scp`` — lists the PLP feature file path, used by HVite
+      during Viterbi decoding.
+
+    Parameters
+    ----------
+    wavfile : str
+        Path to the prepared wav file to be feature-extracted.
+    """
     with open(os.path.join(TEMP_DIR, 'codetr.scp'), 'w') as fw:
         fw.write(wavfile + ' ' + os.path.join(TEMP_DIR, 'tmp.plp') + '\n')
     with open(os.path.join(TEMP_DIR, 'test.scp'), 'w') as fw:
@@ -375,6 +547,20 @@ def prep_scp(wavfile):
 
 
 def create_plp(hcopy_config, verbose=False):
+    """Run HCopy to extract PLP features from the prepared wav file.
+
+    Reads the wav file listed in ``TEMP_DIR/codetr.scp`` and writes PLP
+    features to ``TEMP_DIR/tmp.plp`` using the supplied HCopy
+    configuration file.
+
+    Parameters
+    ----------
+    hcopy_config : str
+        Path to the HCopy configuration file for the target sample rate.
+    verbose : bool, optional
+        If True, print the HCopy command before executing it.
+        Default is False.
+    """
     cmd = [
         'HCopy', '-T', '1',
         '-C', hcopy_config,
@@ -387,6 +573,34 @@ def create_plp(hcopy_config, verbose=False):
 
 def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
             state_align=False, verbose=False):
+    """Run HVite to perform Viterbi forced alignment.
+
+    Aligns the PLP features in ``TEMP_DIR/tmp.plp`` against the word
+    sequence in *input_mlf* and writes phone-level (and optionally
+    HMM state-level) alignments to *output_mlf*. HVite stdout (which
+    contains the per-utterance log-likelihood score) is written to
+    ``TEMP_DIR/aligned.results``.
+
+    Parameters
+    ----------
+    input_mlf : str
+        Path to the input MLF file containing the word sequence.
+    word_dictionary : str
+        Path to the HTK pronunciation dictionary.
+    output_mlf : str
+        Path to write the output phone-level alignment MLF.
+    phoneset : str
+        Path to the HTK phoneset file (``monophones`` or ``hmmnames``).
+    hmmdir : str
+        Directory containing the acoustic model files (``macros`` and
+        ``hmmdefs``).
+    state_align : bool, optional
+        If True, pass ``-f -y lab`` to HVite to produce HMM state-level
+        alignments in addition to phone-level ones. Default is False.
+    verbose : bool, optional
+        If True, print the HVite command before executing it.
+        Default is False.
+    """
     cmd = ['HVite', '-T', '1', '-a', '-m']
     if state_align:
         cmd += ['-f', '-y', 'lab']
@@ -412,6 +626,64 @@ def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
 def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
           sr_override=None, model_path=None, custom_dict=None,
           state_align=False, verbose=False):
+    """Forced-align a wav file to its transcript using P2FA acoustic models.
+
+    Prepares input files, runs HCopy (PLP feature extraction) and HVite
+    (Viterbi decoding), and returns phone- and word-level alignments. If
+    *outdir* is provided the alignments are also written to disk as a
+    Praat TextGrid and a pair of HTK label files.
+
+    Parameters
+    ----------
+    wavfile : str
+        Path to the input wav file.
+    trsfile : str
+        Path to the plain-text transcript file.
+    outdir : str or None, optional
+        Directory in which to write output files. Created if it does not
+        exist. Three files are written, each named after *wavfile*:
+        ``<stem>.TextGrid``, ``<stem>.words``, and ``<stem>.phones``.
+        If None, no files are written. Default is None.
+    wave_start : str, optional
+        Start time (seconds) of the portion of *wavfile* to align.
+        Default is ``'0.0'``.
+    wave_end : str or None, optional
+        End time (seconds) of the portion of *wavfile* to align.
+        If None, align to the end of the file. Default is None.
+    sr_override : int or None, optional
+        Force a specific sample rate (Hz) for alignment. Must be one of
+        the rates for which an acoustic model exists (8000, 11025, or
+        16000) when using the built-in models. Default is None.
+    model_path : str or None, optional
+        Path to the directory containing acoustic model files. If None,
+        the ``model`` subdirectory next to this script is used and
+        sample-rate-specific subdirectories are selected automatically.
+        Default is None.
+    custom_dict : str or None, optional
+        Path to an additional pronunciation dictionary to append to the
+        built-in one. If None, a ``dict.local`` file in the current
+        working directory is used if present. Default is None.
+    state_align : bool or int, optional
+        If True (or 1), also produce HMM state-level alignments.
+        Default is False.
+    verbose : bool or int, optional
+        If True (or 1), print HCopy and HVite commands before executing
+        them. Default is False.
+
+    Returns
+    -------
+    phoneme_alignments : list of list
+        Flat list of phone-level segments, each ``[label, onset, offset]``
+        with times in seconds.
+    word_alignments : list of list
+        List of word-level segments, each ``[label, onset, offset]`` with
+        times in seconds. Words with no realised phones are omitted.
+    state_alignments : list of list
+        HMM state-level segments in the same format as *phoneme_alignments*.
+        Only returned when *state_align* is True.
+    av_score_per_frame : float
+        Average Viterbi log-likelihood per frame.
+    """
     surround_token = "sp"
     between_token = "sp"
 
