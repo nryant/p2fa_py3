@@ -38,12 +38,13 @@
                 TextGrid;
 """
 
+import argparse
 import os
-import wave
 import re
 import shutil
+import subprocess
 import tempfile
-import argparse
+import wave
 
 
 TEMP_DIR = os.path.join(tempfile.gettempdir(), 'p2fa')
@@ -90,26 +91,26 @@ def prep_wav(orig_wav, out_wav, sr_override, wave_start, wave_end, sr_models):
     with wave.open(orig_wav, 'r') as f:
         sr = f.getframerate()
 
-    soxopts = ""
+    soxopts = []
     if float(wave_start) != 0.0 or wave_end is not None:
-        soxopts += " trim " + wave_start
+        soxopts += ['trim', wave_start]
         if wave_end is not None:
-            soxopts += " " + str(float(wave_end) - float(wave_start))
+            soxopts += [str(float(wave_end) - float(wave_start))]
 
     if (sr_models is not None and sr not in sr_models) or (
-            sr_override is not None and sr != sr_override) or soxopts != "":
+            sr_override is not None and sr != sr_override) or soxopts:
         new_sr = 11025
         if sr_override is not None:
             new_sr = sr_override
 
         print("Resampling wav file from " + str(sr) +
-              " to " + str(new_sr) + soxopts + "...")
+              " to " + str(new_sr) + "...")
         sr = new_sr
-        os.system("sox " + orig_wav + " -r " + str(sr) +
-                  " " + out_wav + " " + soxopts)
+        subprocess.run(
+            ['sox', orig_wav, '-r', str(sr), out_wav] + soxopts,
+            check=True)
     else:
-        # print("Using wav file, already at sampling rate " + str(sr) + ".")
-        os.system("cp -f " + orig_wav + " " + out_wav)
+        shutil.copy(orig_wav, out_wav)
 
     return sr
 
@@ -374,41 +375,38 @@ def prep_scp(wavfile):
 
 
 def create_plp(hcopy_config, verbose=False):
-    cmd = (
-        'HCopy -T 1'
-        f' -C {hcopy_config}'
-        f' -S {os.path.join(TEMP_DIR, "codetr.scp")}'
-        )
+    cmd = [
+        'HCopy', '-T', '1',
+        '-C', hcopy_config,
+        '-S', os.path.join(TEMP_DIR, 'codetr.scp')]
     if verbose:
-        print('creating plp...\n', cmd)
+        print('creating plp...\n', ' '.join(cmd))
 
-    os.system(cmd)
+    subprocess.run(cmd, check=True)
 
 
 def viterbi(input_mlf, word_dictionary, output_mlf, phoneset, hmmdir,
             state_align=False, verbose=False):
+    cmd = ['HVite', '-T', '1', '-a', '-m']
     if state_align:
-        salign = ' -f -y lab'
-    else:
-        salign = ''
-
-    cmd = (
-        'HVite -T 1 -a -m'
-        f'{salign}'
-        f' -I {input_mlf}'
-        f' -H {os.path.join(hmmdir, "macros")}'
-        f' -H {os.path.join(hmmdir, "hmmdefs")}'
-        f' -S {os.path.join(TEMP_DIR, "test.scp")}'
-        f' -i {output_mlf}'
-        f' -p 0.0 -s 5.0'
-        f' {word_dictionary}'
-        f' {phoneset}'
-        f' > {os.path.join(TEMP_DIR, "aligned.results")}'
-        )
+        cmd += ['-f', '-y', 'lab']
+    cmd += [
+        '-I', input_mlf,
+        '-H', os.path.join(hmmdir, 'macros'),
+        '-H', os.path.join(hmmdir, 'hmmdefs'),
+        '-S', os.path.join(TEMP_DIR, 'test.scp'),
+        '-i', output_mlf,
+        '-p', '0.0',
+        '-s', '5.0',
+        word_dictionary,
+        phoneset]
 
     if verbose:
-        print('running viterbi...\n', cmd)
-    os.system(cmd)
+        print('running viterbi...\n', ' '.join(cmd))
+
+    results_file = os.path.join(TEMP_DIR, 'aligned.results')
+    with open(results_file, 'w') as f:
+        subprocess.run(cmd, check=True, stdout=f)
 
 
 def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
@@ -444,16 +442,16 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
     # create working directory
     prep_working_directory()
 
-    # create ./tmp/dict by concatening our dict with a local one
+    # create ./tmp/dict by concatenating our dict with a local one
+    dict_files = [os.path.join(model_path, 'dict')]
     if custom_dict is not None:
-        os.system("cat " + model_path + "/dict " + custom_dict
-                  + " > " + word_dictionary)
-    else:
-        if os.path.exists("dict.local"):
-            os.system("cat " + model_path + "/dict dict.local > "
-                      + word_dictionary)
-        else:
-            os.system("cat " + model_path + "/dict > " + word_dictionary)
+        dict_files.append(custom_dict)
+    elif os.path.exists('dict.local'):
+        dict_files.append('dict.local')
+    with open(word_dictionary, 'w') as out:
+        for path in dict_files:
+            with open(path, 'r') as f:
+                out.write(f.read())
 
     # prepare wavefile: do a resampling if necessary
     tmpwav = os.path.join(TEMP_DIR, 'sound.wav')
