@@ -87,9 +87,8 @@ def prep_wav(orig_wav, out_wav, sr_override, wave_start, wave_end, sr_models):
         print("Already re-sampled the wav file to " + str(sr))
         return sr
 
-    f = wave.open(orig_wav, 'r')
-    sr = f.getframerate()
-    f.close()
+    with wave.open(orig_wav, 'r') as f:
+        sr = f.getframerate()
 
     soxopts = ""
     if float(wave_start) != 0.0 or wave_end is not None:
@@ -119,16 +118,14 @@ def prep_mlf(trsfile, mlffile, word_dictionary, surround, between):
     # Read in the dictionary to ensure all of the words
     # we put in the MLF file are in the dictionary. Words
     # that are not are skipped with a warning.
-    f = open(word_dictionary, 'r')
-    the_dict = {}  # build hash table
-    for line in f.readlines():
-        if line != "\n" and line != "":
-            the_dict[line.split()[0]] = True
-    f.close()
+    with open(word_dictionary, 'r') as f:
+        the_dict = {}  # build hash table
+        for line in f.readlines():
+            if line != "\n" and line != "":
+                the_dict[line.split()[0]] = True
 
-    f = open(trsfile, 'r')
-    lines = f.readlines()
-    f.close()
+    with open(trsfile, 'r') as f:
+        lines = f.readlines()
 
     words = []
 
@@ -179,13 +176,12 @@ def prep_mlf(trsfile, mlffile, word_dictionary, surround, between):
 
 
 def write_input_mlf(mlffile, words):
-    fw = open(mlffile, 'w')
-    fw.write('#!MLF!#\n')
-    fw.write('"*/tmp.lab"\n')
-    for wrd in words:
-        fw.write(wrd + '\n')
-    fw.write('.\n')
-    fw.close()
+    with open(mlffile, 'w') as fw:
+        fw.write('#!MLF!#\n')
+        fw.write('"*/tmp.lab"\n')
+        for wrd in words:
+            fw.write(wrd + '\n')
+        fw.write('.\n')
 
 
 def read_aligned_mlf(mlffile, sr, wave_start, duration=None):
@@ -195,9 +191,8 @@ def read_aligned_mlf(mlffile, sr, wave_start, duration=None):
     # (phone, start_time, end_time) with times in seconds.
     #
     # TODO: extract log-likelihood score
-    f = open(mlffile, 'r')
-    lines = [line.rstrip() for line in f.readlines()]
-    f.close()
+    with open(mlffile, 'r') as f:
+        lines = [line.rstrip() for line in f.readlines()]
 
     if len(lines) < 3:
         raise ValueError("Alignment did not complete succesfully.")
@@ -293,56 +288,54 @@ def write_text_grid(outfile, word_alignments, state_alignments=None):
         # word label, first phone start time, last phone end time
         wrds.append([wrd[0], wrd[1][1], wrd[-1][2]])
 
-    fw = open(outfile, 'w')
-    fw.write('File type = "ooTextFile short"\n')
-    fw.write('"TextGrid"\n')
-    fw.write('\n')
-    fw.write(str(phons[0][1]) + '\n')
-    fw.write(str(phons[-1][-1]) + '\n')
-    fw.write('<exists>\n')
-    if state_alignments is not None:
-        fw.write('3\n')
-    else:
-        fw.write('2\n')
+    with open(outfile, 'w') as fw:
+        fw.write('File type = "ooTextFile short"\n')
+        fw.write('"TextGrid"\n')
+        fw.write('\n')
+        fw.write(str(phons[0][1]) + '\n')
+        fw.write(str(phons[-1][-1]) + '\n')
+        fw.write('<exists>\n')
+        if state_alignments is not None:
+            fw.write('3\n')
+        else:
+            fw.write('2\n')
 
-    # write the state interval tier
-    if state_alignments is not None:
+        # write the state interval tier
+        if state_alignments is not None:
+            fw.write('"IntervalTier"\n')
+            fw.write('"state"\n')
+            fw.write(str(states[0][1]) + '\n')
+            fw.write(str(states[-1][-1]) + '\n')
+            fw.write(str(len(states)) + '\n')
+            for k in range(len(states)):
+                fw.write(str(states[k][1]) + '\n')
+                fw.write(str(states[k][2]) + '\n')
+                fw.write('"' + states[k][0] + '"' + '\n')
+
+        # write the phone interval tier
         fw.write('"IntervalTier"\n')
-        fw.write('"state"\n')
-        fw.write(str(states[0][1]) + '\n')
-        fw.write(str(states[-1][-1]) + '\n')
-        fw.write(str(len(states)) + '\n')
-        for k in range(len(states)):
-            fw.write(str(states[k][1]) + '\n')
-            fw.write(str(states[k][2]) + '\n')
-            fw.write('"' + states[k][0] + '"' + '\n')
+        fw.write('"phone"\n')
+        fw.write(str(phons[0][1]) + '\n')
+        fw.write(str(phons[-1][-1]) + '\n')
+        fw.write(str(len(phons)) + '\n')
+        for k in range(len(phons)):
+            fw.write(str(phons[k][1]) + '\n')
+            fw.write(str(phons[k][2]) + '\n')
+            fw.write('"' + phons[k][0] + '"' + '\n')
 
-    # write the phone interval tier
-    fw.write('"IntervalTier"\n')
-    fw.write('"phone"\n')
-    fw.write(str(phons[0][1]) + '\n')
-    fw.write(str(phons[-1][-1]) + '\n')
-    fw.write(str(len(phons)) + '\n')
-    for k in range(len(phons)):
-        fw.write(str(phons[k][1]) + '\n')
-        fw.write(str(phons[k][2]) + '\n')
-        fw.write('"' + phons[k][0] + '"' + '\n')
-
-    # write the word interval tier
-    fw.write('"IntervalTier"\n')
-    fw.write('"word"\n')
-    fw.write(str(phons[0][1]) + '\n')
-    fw.write(str(phons[-1][-1]) + '\n')
-    fw.write(str(len(wrds)) + '\n')
-    for k in range(len(wrds) - 1):
-        fw.write(str(wrds[k][1]) + '\n')
-        fw.write(str(wrds[k+1][1]) + '\n')
-        fw.write('"' + wrds[k][0] + '"' + '\n')
-    fw.write(str(wrds[-1][1]) + '\n')
-    fw.write(str(phons[-1][2]) + '\n')
-    fw.write('"' + wrds[-1][0] + '"' + '\n')
-
-    fw.close()
+        # write the word interval tier
+        fw.write('"IntervalTier"\n')
+        fw.write('"word"\n')
+        fw.write(str(phons[0][1]) + '\n')
+        fw.write(str(phons[-1][-1]) + '\n')
+        fw.write(str(len(wrds)) + '\n')
+        for k in range(len(wrds) - 1):
+            fw.write(str(wrds[k][1]) + '\n')
+            fw.write(str(wrds[k+1][1]) + '\n')
+            fw.write('"' + wrds[k][0] + '"' + '\n')
+        fw.write(str(wrds[-1][1]) + '\n')
+        fw.write(str(phons[-1][2]) + '\n')
+        fw.write('"' + wrds[-1][0] + '"' + '\n')
 
 
 def write_htk_label_file(outfile, segments):
@@ -374,12 +367,10 @@ def delete_working_directory():
 
 
 def prep_scp(wavfile):
-    fw = open(os.path.join(TEMP_DIR, 'codetr.scp'), 'w')
-    fw.write(wavfile + ' ' + os.path.join(TEMP_DIR, 'tmp.plp') + '\n')
-    fw.close()
-    fw = open(os.path.join(TEMP_DIR, 'test.scp'), 'w')
-    fw.write(os.path.join(TEMP_DIR, 'tmp.plp') + '\n')
-    fw.close()
+    with open(os.path.join(TEMP_DIR, 'codetr.scp'), 'w') as fw:
+        fw.write(wavfile + ' ' + os.path.join(TEMP_DIR, 'tmp.plp') + '\n')
+    with open(os.path.join(TEMP_DIR, 'test.scp'), 'w') as fw:
+        fw.write(os.path.join(TEMP_DIR, 'tmp.plp') + '\n')
 
 
 def create_plp(hcopy_config, verbose=False):
@@ -493,9 +484,8 @@ def align(wavfile, trsfile, outdir=None, wave_start='0.0', wave_end=None,
             verbose=verbose)
 
     # compute actual recording duration for timestamp clamping
-    f = wave.open(tmpwav, 'r')
-    rec_duration = f.getnframes() / sr
-    f.close()
+    with wave.open(tmpwav, 'r') as f:
+        rec_duration = f.getnframes() / sr
 
     if state_align:
         viterbi(input_mlf, word_dictionary, state_mlf, mpfile, hmmdir,
