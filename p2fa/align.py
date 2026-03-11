@@ -261,7 +261,9 @@ def read_aligned_mlf(mlffile, sr, wave_start, duration=None):
 
     The first phone onset is clamped to *wave_start* and the last phone
     offset is clamped to ``wave_start + duration`` to counteract any
-    overshoot introduced by the timestamp shift.
+    overshoot introduced by the timestamp shift. Words with no phones
+    (e.g. optional silences that were not realised) are removed before
+    clamping.
 
     Parameters
     ----------
@@ -324,6 +326,10 @@ def read_aligned_mlf(mlffile, sr, wave_start, duration=None):
 
         j += 1
 
+    # Remove any words that have no phones (e.g. optional silences that
+    # were not realised).
+    ret = [w for w in ret if len(w) > 1]
+
     # If no duration was supplied, estimate it from the last parsed offset
     # (before clamping), using the same conversion pipeline as above.
     if duration is None:
@@ -353,10 +359,9 @@ def make_alignment_lists(word_alignments):
         Flat list of all phone entries ``[label, onset, offset]`` in
         order.
     wrds : list of list
-        One entry per realised word (words with no phones, such as
-        optional silences that were not realised, are omitted). Each
-        entry is ``[label, onset, offset]`` where *onset* is the start
-        of the first phone and *offset* is the end of the last phone.
+        One entry per word. Each entry is ``[label, onset, offset]``
+        where *onset* is the start of the first phone and *offset* is
+        the end of the last phone.
     """
     # make the list of just phone alignments
     phons = []
@@ -368,10 +373,6 @@ def make_alignment_lists(word_alignments):
     #   ["word label", ["phone1", start, end], ["phone2", start, end], ...]
     wrds = []
     for wrd in word_alignments:
-        # If no phones make up this word, then it was an optional word
-        # like a pause that wasn't actually realized.
-        if len(wrd) == 1:
-            continue
         # word label, first phone start time, last phone end time
         wrds.append([wrd[0], wrd[1][1], wrd[-1][2]])
     return phons, wrds
